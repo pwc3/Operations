@@ -49,41 +49,25 @@ public class AsyncOperation<Success, Failure>: Operation where Failure: Error {
         }
     }
 
-    private let stateLock = NSLock()
+    private let queue = DispatchQueue(label: "AsyncOperation", attributes: .concurrent)
 
-    private var _state: State = .unstarted {
-        willSet {
-            if case .executing = _state {
-                willChangeValue(for: \.isExecuting)
-            }
-            if case .finished = newValue {
-                willChangeValue(for: \.isFinished)
-            }
-        }
-
-        didSet {
-            if case .executing = oldValue {
-                didChangeValue(for: \.isExecuting)
-            }
-            if case .finished = state {
-                didChangeValue(for: \.isFinished)
-            }
-        }
-    }
+    private var _state: State = .unstarted
 
     private var state: State {
         get {
-            stateLock.lock()
-            let result = _state
-            stateLock.unlock()
-            return result
+            return queue.sync {
+                _state
+            }
         }
 
         set {
-            stateLock.lock()
-            precondition(!_state.isFinished, "Cannot change from finished state")
-            _state = newValue
-            stateLock.unlock()
+            queue.sync(flags: .barrier) {
+                precondition(!_state.isFinished, "Cannot change from finished state")
+
+                _state = newValue
+                _isExecuting = _state.isExecuting
+                _isFinished = _state.isFinished
+            }
         }
     }
 
@@ -91,12 +75,32 @@ public class AsyncOperation<Success, Failure>: Operation where Failure: Error {
         return true
     }
 
+    private var _isExecuting: Bool = false {
+        willSet {
+            willChangeValue(for: \.isExecuting)
+        }
+
+        didSet {
+            didChangeValue(for: \.isExecuting)
+        }
+    }
+
     public override var isExecuting: Bool {
-        return state.isExecuting
+        return _isExecuting
+    }
+
+    private var _isFinished: Bool = false {
+        willSet {
+            willChangeValue(for: \.isFinished)
+        }
+
+        didSet {
+            didChangeValue(for: \.isFinished)
+        }
     }
 
     public override var isFinished: Bool {
-        return state.isFinished
+        return _isFinished
     }
 
     public var result: Result<Success, Failure>? {
